@@ -5,9 +5,16 @@ import csv
 import re
 import datetime
 import sys
+import os
 
 
-def insert_into_db(data_list, csv_file): # データベースに引数のリストの各行を追加する
+def make_record(file_name, data):
+    file_object = open(file_name, 'w')
+    file_object.write(data)
+    file_object.close()
+
+
+def insert_into_db(data_list, csv_file):
     conn = pymysql.connect (
         user='', # データベースに登録したユーザネーム
         passwd='', # 当該ユーザのパスワード
@@ -28,18 +35,19 @@ def insert_into_db(data_list, csv_file): # データベースに引数のリス�
         cur.execute(sql, row)
     conn.commit()
 
+    file_object.close()
     cur.close()
     conn.close()
 
 
-def get_source(url): # urlに指定されたWebページのhtmlを取得
+def get_source(url): # get source data from web page of url. 
     req = requests.get(url)
     source = req.text
 
     return source
 
 
-def get_data_from_db(sql): # 指定されたsqlを実行して,データベースからの結果を返す関数
+def get_data_from_db(sql): # get data from db with executing sql
     conn = pymysql.connect (
         user='', # データベースに登録したユーザネーム
         passwd='', # 当該ユーザのパスワード
@@ -58,22 +66,22 @@ def get_data_from_db(sql): # 指定されたsqlを実行して,データベー�
     return rows
 
 
-def write_into_csv(data_list, file_name): # data_list(リスト型)の要素を指定された,CSVファイルへ書きだす
+def write_into_csv(data_array, file_name): # write data_rows in array into csv file
     file_object = open(file_name, 'w')
     writer = csv.writer(file_object)
 
-    for i in range(len(data_list)):
-        writer.writerow(data_list[i])
+    for i in range(len(data_array)):
+        writer.writerow(data_array[i])
 
     file_object.close()
 
 
-def get_group_data(source): # wc_groupのデータの作成を行う. 戻り値は作成したデータ
+def get_group_data(source):
     new_group_data = []
 
     last_group_id = get_data_from_db('SELECT id FROM wc_group ORDER BY id DESC LIMIT 1;')[0][0]
 
-    if last_group_id == 116: 
+    if os.path.isfile('group_record.txt'):
         print('data was already inserted')
         sys.exit()
 
@@ -99,11 +107,12 @@ def get_group_data(source): # wc_groupのデータの作成を行う. 戻り値�
 
     write_into_csv(new_group_data, 'wc_group.csv')
     # insert_into_db(new_group_data, 'wc_group.csv')
+    # make_record('group_record.txt', group_id - 1)
 
     return new_group_data
 
 
-def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,試合を行ったチームのIDのセット(自チームと敵チームのセット)を取得
+def get_team_id(source): # get team_id from wc_team
     regex_new_country_count = re.compile('初出場')
     new_team_count = len(regex_new_country_count.findall(source)) - 1
 
@@ -112,6 +121,7 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
 
         sql = 'SELECT id FROM wc_team ORDER BY id DESC LIMIT 1'
         team_id = get_data_from_db(sql)[0][0] + 1
+        # print(last_team_id)
 
         regex_new_country = '<p>初出場は'
         new_country_name = []
@@ -124,6 +134,7 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
         for i in range(new_team_count):
             new_country_name.append(country_searched.group(i+1))
 
+        # print(new_country_name)
         url = 'https://www.google.com/search'
         url_set = []
         for i in new_country_name:
@@ -135,6 +146,8 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
                 if 'mofa.go.jp/mofaj/area/' in j and 'index' in j:
                     url_set.append(re.sub('&.*', '', j.replace('/url?q=', ''))) 
 
+        # print(url_set)
+
         new_country_area = []
         new_team_name = []
         for i in url_set:
@@ -145,13 +158,17 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
 
             new_team_name.append(i.replace('https://www.mofa.go.jp/mofaj/area/', '').replace('/index.html', ''))
 
+        # print(new_team_name) 
+
         new_country_latitude = []
         new_country_longitude = []
 
         del url_set
+        # gc.collect()
 
         target_page_code = '' # 検索するwebページのurlに指定される番号(ex : https://www.~/4321.aspx)
         for i in new_country_name:
+            print(i)
             req = requests.get(url, params={'q': i+'緯度', 'ie': 'utf-8', 'hl': 'ja', 'lr': 'lang_ja'})
             target_page_code = re.search('<a href="/url\?q=https://www.kyorikeisan.com/ido-keido-kensaku/idotokeidonorekishi/([0-9]+).aspx\&amp;', req.text).group(1)
 
@@ -160,6 +177,8 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
             req = requests.get(target_url)
             new_country_latitude.append(re.search('<span id="MC_GMD_lblLatitude" class="fntBold" itemprop="Latitude">\&nbsp;(.+)</span>', req.text).group(1))
             new_country_longitude.append(re.search('<span id=\"MC_GMD_lblLongitude\" class=\"fntBold\" itemprop=\"Longitude\">\&nbsp;(.+)</span>', req.text).group(1))
+            print(new_country_latitude)
+            print(new_country_longitude)
 
         for i in range(new_team_count):
             new_team_data.append([team_id, new_team_name[i], new_country_name[i], new_country_name[i], new_country_area[i], new_country_latitude[i], new_country_longitude[i]])
@@ -171,7 +190,7 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
     regex = re.compile(r'<a href=.*#.*_vs_.*" .*')
     matched_text = regex.findall(source)
 
-    team_list = []
+    team_list = [] # タプル: team1, team2
     for l in matched_text:
         team_names = re.search(r'#(.*)_vs_(.*)\" title=\".* FIFA(.*)', l).group(1, 2)
         team_list.append(team_names) 
@@ -213,7 +232,7 @@ def get_team_id(source): # wc_teamのテーブルへのデータの追加及び,
     return team_id_list # team_id_list : 2-dimension array [i][0] : team_id1 // [i][1] : team_id2
 
 
-def get_tournament_id(source): # wc_tournamentに追加するデータの生成とtournament_idを返す関数
+def get_tournament_id(source):
     new_tournament_data = []
 
     regex = re.compile(r'開催国.*\s<a href=".*:Flag_of_.*\.svg" class="image" title=".*"><img alt=".*" src=".*\.svg\.png" decoding="async" width=".*" height=".*" class="thumbborder" srcset=".*" data-file-width=".*" data-file-height=".*" /></a> <a href=".*" title=".*">.*</a></td></tr>')
@@ -232,28 +251,24 @@ def get_tournament_id(source): # wc_tournamentに追加するデータの生成�
     
     if result[0][1] == (str(year) + '年'):
         print('data was already inserted')
-        # return last_tournament_id
-        sys.exit()
+        return last_tournament_id
 
     tournament_id = int(last_tournament_id) + 1
 
     new_tournament_data.append([tournament_id, str(year)+'年 '+country, datetime.date(int(year),int(day[0]),int(day[1])), str(year)+'年', country])
 
     write_into_csv(new_tournament_data, 'wc_tournament.csv')
-    # insert_into_db(new_tournament_data, 'wc_tournament.csv')
 
     return tournament_id
     
 
-def get_round_data(source): # wc_roundに追加するデータの生成と呼び出し元へそのデータを返す関数
+def get_round_id(source):
     tournament_id = get_tournament_id(source)
     
     sql = "SELECT id FROM wc_round ORDER BY id DESC LIMIT 1 ;"
-    last_round_id = get_data_from_db(sql)[0][0] # result of processing query is tuple
+    last_round_id = get_data_from_db(sql)[0][0] # クエリの処理の結果はタプル
     if last_round_id == 310:
-        # return last_round_id
-        print('data was already inserted')
-        sys.exit()
+        return last_round_id
 
     round_id = last_round_id + 1
 
@@ -302,21 +317,16 @@ def get_round_data(source): # wc_roundに追加するデータの生成と呼び
     new_round_data.append([round_id, tournament_id, '決勝', 1, knockout, knockout_stage_date[15], knockout_stage_date[15]])
 
     write_into_csv(new_round_data, 'wc_round.csv')
-    # insert_into_db(new_round_data, 'wc_round.csv')
 
-    return new_round_data # new_round_data : [round_id, tournament_id, name, ordering, knockout_code, start_date, end_date]
+    return new_round_data # new_round_data is list which has round_id, tournament_id, name, ordering, knockout_code, start_date, end_date
 
 
-def get_match_id(source): # wc_matchに追加するデータの生成及び生成したデータを呼び出し元へ返す関数
+def get_match_id(source):
     sql = "SELECT id FROM wc_match ORDER BY id DESC LIMIT 1;"
     last_match_id = get_data_from_db(sql)[0][0]
-
-    if last_match_id == 900:
-        print('data was already inserted')
-        sys.exit() 
     match_id = last_match_id + 1
 
-    round_data = get_round_data(source)
+    round_data = get_round_id(source)
     regex = re.compile(r'<td><div style=\".*\">[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日<br />[0-9]{1,2}:[0-9]{1,2}.*')
     group_stage_time_text = regex.findall(source)
 
@@ -332,7 +342,7 @@ def get_match_id(source): # wc_matchに追加するデータの生成及び生�
         knockout_stage_time = re.search(r'<td><div style=\".*\"><a href=\".*\" title=\".*\">([0-9]{4})年</a><a href=\".*\" title=\".*\">([0-9]{1,2})月([0-9]{1,2})日</a><br />([0-9]{1,2}:[0-9]{1,2}).*', knockout_stage_time_text[i])
         match_time.append([knockout_stage_time.group(1), knockout_stage_time.group(2), knockout_stage_time.group(3), knockout_stage_time.group(4)])
 
-    group_data = get_group_data(source) # it is list
+    group_data = get_group_data(source) # list
     new_match_data = []
     knockout = 0
 
@@ -357,36 +367,29 @@ def get_match_id(source): # wc_matchに追加するデータの生成及び生�
     for i in range(len(group_data)):
         for j in range(6): # Combination(4,2) = 6, in 1 group, there are 4 teams so match has 6-times 
             round_id = round_dict[datetime.date(int(match_time[count][0]), int(match_time[count][1]), int(match_time[count][2])).strftime('%Y-%m-%d')]
-
             new_match_data.append([match_id, round_id, group_data[i][0], datetime.datetime(int(match_time[count][0]), int(match_time[count][1]), int(match_time[count][2]), int(match_time[count][3][0:match_time[count][3].find(':')]), int(match_time[count][3][match_time[count][3].find(':')+1:])), order_dict[datetime.datetime(int(match_time[count][0]), int(match_time[count][1]), int(match_time[count][2]), int(match_time[count][3][0:match_time[count][3].find(':')]), int(match_time[count][3][match_time[count][3].find(':')+1:]))], knockout])
-
             count += 1
             match_id += 1
 
     knockout = 1
     for i in range(len(match_time)-len(group_data)*6):
+        
         round_id = round_dict[datetime.date(int(match_time[count][0]), int(match_time[count][1]), int(match_time[count][2])).strftime('%Y-%m-%d')]
-
         new_match_data.append([match_id, round_id, 0, datetime.datetime(int(match_time[count][0]), int(match_time[count][1]), int(match_time[count][2]), int(match_time[count][3][0:match_time[count][3].find(':')]), int(match_time[count][3][match_time[count][3].find(':')+1:])), order_dict[datetime.datetime(int(match_time[count][0]), int(match_time[count][1]), int(match_time[count][2]), int(match_time[count][3][0:match_time[count][3].find(':')]), int(match_time[count][3][match_time[count][3].find(':')+1:]))], knockout])
-
         count += 1
         match_id += 1
 
     write_into_csv(new_match_data, 'wc_match.csv')
-    # insert_into_db(new_match_data, 'wc_match.csv')
-
     return new_match_data
 
     
-def make_result_data(source): # wc_resultに追加するデータの生成
+def make_result_data(source):
     new_result_data = []
     duplicate = '重複を省く'
 
     last_result_id = get_data_from_db('SELECT id FROM wc_result ORDER BY id DESC LIMIT 1;')[0][0]
-    if last_result_id == 1799:
-        print('data was already inserted')
-        sys.exit() 
-
+    if last_result_id == 1763:
+        return
     result_id = last_result_id + 2
     team_id_set = get_team_id(source)
     match_data = get_match_id(source)
@@ -417,7 +420,7 @@ def make_result_data(source): # wc_resultに追加するデータの生成
 
     count = 0
     for i in texts_in_div:
-        if not '延長' in i: # 延長戦が行われなかった場合
+        if not '延長' in i:
             score = re.search('([0-9]+) (-|−) ([0-9]+)', i)
             rs = int(score.group(1))
             ra = int(score.group(3))
@@ -453,14 +456,16 @@ def make_result_data(source): # wc_resultに追加するデータの生成
                 extra = '0'
                 pk = 0
 
-        else: # 延長戦が行われた場合
-            if not 'PK' in i: # PK戦が行われなかった場合
+        else:
+            if not 'PK' in i:
                 score = re.search('([0-9]+) (-|−) ([0-9]+)', i)
+                # print(score.group(1), score.group(3))
                 rs_total = int(score.group(1))
                 ra_total = int(score.group(3))
 
                 goal_time = regex_for_extra.findall(i)
                 count_goal_extra = 0
+                # print(goal_time)
                 for j in goal_time:
                     if int(j.replace(',', '').replace(' ', '').replace('分', '')) >= 96:
                         count_goal_extra += 1
@@ -492,13 +497,14 @@ def make_result_data(source): # wc_resultに追加するデータの生成
                     extra = '1'
                     pk = 0   
 
-            else: # PK戦が行われた場合
+            else:
                 score = re.search('([0-9]+) (-|−) ([0-9]+) \(延長\)', i)
                 rs_total = int(score.group(1))
                 ra_total = int(score.group(3))
 
                 goal_time = regex_for_extra.findall(i)
                 count_goal_extra = 0
+                # print(goal_time)
                 for j in goal_time:
                     if int(j.replace(',', '').replace(' ', '').replace('分', '')) >= 96:
                         count_goal_extra += 1
@@ -559,11 +565,12 @@ def make_result_data(source): # wc_resultに追加するデータの生成
         count += 1
 
     write_into_csv(new_result_data, 'wc_result.csv')
-    # insert_into_db(new_result_data, 'wc_result.csv')
+
 
 def main():
     url = 'https://ja.wikipedia.org/wiki/2018_FIFA%E3%83%AF%E3%83%BC%E3%83%AB%E3%83%89%E3%82%AB%E3%83%83%E3%83%97' # 検索対象のWebページのURL
-    make_result_data(get_source(url))
+    # make_result_data(get_source(url))
+    get_team_id(get_source(url))
 
 
 main()
